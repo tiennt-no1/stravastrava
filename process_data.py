@@ -7,24 +7,25 @@ import sys
 
 # ================== CONFIG ==================
 
+# --- CÁC THÔNG SỐ CẦN THAY ĐỔI ---
 CLIENT_ID = "184098"
-CLIENT_SECRET = "5f1a1308dc7f1d471ea540ff9ed925066afe6c2" 
+CLIENT_SECRET = "5f1a1308dc7f1d471ea540ff90ed925066afe6c2" 
 
-TOKENS_CSV = "tokens.csv"
+TOKENS_CSV = "tokens.csv" # File chứa access_token/refresh_token
 
 # --- OUTPUT FILE CONFIG ---
 LEADERBOARD_CSV = "leaderboard.csv"
 DAILY_KM_CSV = "daily_km.csv"
 INVALID_ACTIVITIES_CSV = "invalid_activities.csv"
+VALID_RUNS_LOG = "valid_runs_log.csv" # FILE MỚI: Log của các hoạt động hợp lệ đã xử lý
 # --------------------------
 
 # Thời gian tính thành tích (giờ VN, UTC+7)
 VN_TZ = timezone(timedelta(hours=7))
 
-# Vùng thời gian phân tích
-# START_VN chỉ là MỐC THỜI GIAN SỚM NHẤT mà bạn muốn bắt đầu theo dõi.
+# Vùng thời gian phân tích (chỉ tính thành tích trong khoảng này)
 START_VN = datetime(2025, 11, 1, 0, 0, 0, tzinfo=VN_TZ)
-END_VN  = datetime(2025, 11, 30, 23, 59, 59, tzinfo=VN_TZ) 
+END_VN = datetime(2025, 11, 30, 23, 59, 59, tzinfo=VN_TZ) 
 
 # Pace hợp lệ (min/km): 4 < pace < 15
 PACE_MIN = 4.0
@@ -56,7 +57,7 @@ def pace_min_per_km_from_mps(mps: float) -> float:
 
 
 def ensure_fresh_token(row: dict):
-    # (Hàm này giữ nguyên)
+    """Làm mới token nếu sắp hết hạn."""
     access_token = row.get("access_token", "")
     refresh_token = row.get("refresh_token", "")
     expires_at_str = row.get("expires_at", "") or "0"
@@ -89,7 +90,7 @@ def ensure_fresh_token(row: dict):
 
 
 def get_athlete_activities(token: str, after_ts: int, before_ts: int):
-    # (Hàm này giữ nguyên)
+    """GET /athlete/activities với paging, chỉ lấy hoạt động mới."""
     acts = []
     page = 1
     headers = {"Authorization": f"Bearer {token}"}
@@ -117,7 +118,7 @@ def get_athlete_activities(token: str, after_ts: int, before_ts: int):
 
 
 def get_activity_laps(token: str, activity_id: int):
-    # (Hàm này giữ nguyên)
+    """Lấy dữ liệu lap để check pace."""
     headers = {"Authorization": f"Bearer {token}"}
     r = requests.get(
         f"{STRAVA_BASE}/activities/{activity_id}/laps",
@@ -136,7 +137,7 @@ def get_activity_laps(token: str, activity_id: int):
 
 
 def iso_to_vn_date(iso_str: str):
-    # (Hàm này giữ nguyên)
+    """start_date (UTC) -> YYYY-MM-DD theo giờ Việt Nam."""
     if not iso_str:
         return None
     dt_utc = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
@@ -145,7 +146,7 @@ def iso_to_vn_date(iso_str: str):
 
 
 def load_tokens(path: str):
-    # (Hàm này giữ nguyên)
+    """Tải tokens từ CSV."""
     rows = []
     if not os.path.exists(path):
         return rows
@@ -154,6 +155,7 @@ def load_tokens(path: str):
         for row in reader:
             epoch_str = row.get("latest_activity_epoch", "0") or "0"
             try:
+                # Nếu latest_activity_epoch trống, nó sẽ là 0.
                 row["latest_activity_epoch"] = int(float(epoch_str))
             except ValueError:
                 row["latest_activity_epoch"] = 0
@@ -162,7 +164,7 @@ def load_tokens(path: str):
 
 
 def save_tokens(path: str, rows):
-    # (Hàm này giữ nguyên)
+    """Lưu lại tokens và latest_activity_epoch."""
     if not rows:
         return
     fieldnames = [
@@ -177,6 +179,52 @@ def save_tokens(path: str, rows):
             writer.writerow(r)
 
 
+def load_valid_runs(path: str) -> dict:
+    """
+    Tải log hoạt động hợp lệ đã xử lý.
+    Trả về: {athlete_id: {activity_id: row_data}}
+    """
+    log = {}
+    if not os.path.exists(path):
+        return log
+    with open(path, "r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            athlete_id = row.get("athlete_id")
+            activity_id = row.get("activity_id")
+            # Chuyển đổi distance_km về float
+            try:
+                row["distance_km"] = float(row.get("distance_km", 0.0))
+            except ValueError:
+                row["distance_km"] = 0.0
+                
+            if athlete_id and activity_id:
+                if athlete_id not in log:
+                    log[athlete_id] = {}
+                log[athlete_id][activity_id] = row
+    return log
+
+def save_valid_runs(path: str, log: dict):
+    """Lưu lại toàn bộ log hoạt động hợp lệ."""
+    rows = []
+    for athlete_id in log:
+        for activity_id in log[athlete_id]:
+            rows.append(log[athlete_id][activity_id])
+
+    if not rows:
+        return
+        
+    fieldnames = [
+        "athlete_id", "activity_id", "date_vn", 
+        "distance_km", "start_date", "type", "name", 
+        "summary_polyline" 
+    ]
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
 # ================== MAIN ==================
 
 def gen_report():
@@ -186,11 +234,14 @@ def gen_report():
 
     print(f"Phạm vi phân tích cố định (Giờ VN): {START_VN} -> {END_VN}")
 
+    # Tải log TẤT CẢ các hoạt động hợp lệ đã xử lý (Master Log)
+    all_valid_runs = load_valid_runs(VALID_RUNS_LOG) 
+
     leaderboard_rows = []
     daily_rows = []
     invalid_rows = []
-
     updated_token_rows = []
+
 
     for row in token_rows:
         athlete_id = row.get("athlete_id", "")
@@ -207,62 +258,51 @@ def gen_report():
         row["refresh_token"] = refresh_token
         row["expires_at"] = str(expires_at)
         
-        # Logic tính toán after mới
+        # Tính toán mốc thời gian truy vấn tối ưu
         query_after_csv = latest_epoch_csv + 1 if latest_epoch_csv > 0 else 0
         query_after_ts = max(GLOBAL_AFTER, query_after_csv)
         query_before_ts = GLOBAL_BEFORE
         
-        if query_after_ts >= query_before_ts:
-             print("  -> Mốc thời gian truy vấn đã vượt quá END_VN hoặc không có hoạt động mới trong phạm vi.")
-             updated_token_rows.append(row)
-             continue
+        activities = [] # Danh sách hoạt động mới fetch
         
-        if not access_token:
+        if query_after_ts >= query_before_ts:
+             print("  -> Đã xử lý hết hoạt động trong phạm vi. Bỏ qua fetch.")
+        
+        elif not access_token:
             print("  !! Không có access_token, bỏ qua.")
             updated_token_rows.append(row)
             continue
+        
+        else:
+            try:
+                activities = get_athlete_activities(access_token, query_after_ts, query_before_ts)
+                print(f"  -> Đã tìm thấy {len(activities)} hoạt động mới/cập nhật.")
+            except Exception as e:
+                print(f"  !! Lỗi fetch activities: {e}")
+                updated_token_rows.append(row)
+                continue
 
-        try:
-            activities = get_athlete_activities(access_token, query_after_ts, query_before_ts)
-            print(f"  -> Đã tìm thấy {len(activities)} hoạt động mới/cập nhật.")
-        except Exception as e:
-            print(f"  !! Lỗi fetch activities: {e}")
-            updated_token_rows.append(row)
-            continue
-            
+
+        # === 1. XỬ LÝ VÀ GỘP CÁC HOẠT ĐỘNG MỚI (MERGE LOGIC) ===
+        
+        # Đảm bảo có mục cho athlete này trong log
+        if athlete_id not in all_valid_runs:
+            all_valid_runs[athlete_id] = {}
+        
         new_latest_epoch = latest_epoch_csv
-        if activities:
-            max_epoch_fetched = max(to_epoch(datetime.fromisoformat(act.get("start_date").replace("Z", "+00:00"))) for act in activities)
-            new_latest_epoch = max(latest_epoch_csv, max_epoch_fetched)
-
-        row["latest_activity_epoch"] = new_latest_epoch
-        updated_token_rows.append(row)
-        print(f"  * Latest processed epoch (NEW): {new_latest_epoch}")
-
-
-        # Tổng kết theo ngày (raw & capped) - (Phần này giữ nguyên logic tính toán)
-        daily_raw = {} 
-        daily_valid_act_count = {} 
-        total_raw_km = 0.0
-        total_capped_km = 0.0
-        total_runs_count = 0
-
+        newly_invalid_runs = [] 
+        
         for act in activities:
             act_type = act.get("type")
+            act_id = str(act.get("id"))
+            
             if act_type not in ("Run", "TrailRun"):
                 continue
 
-            act_id = act.get("id")
-            name = act.get("name")
-            start_date = act.get("start_date") 
-            day_vn = iso_to_vn_date(start_date)
-            distance_m = act.get("distance", 0.0) or 0.0
-            dist_km = distance_m / 1000.0
-
+            # Check pace/laps
             try:
                 laps = get_activity_laps(access_token, act_id)
             except Exception as e:
-                print(f"  !! Lỗi fetch laps cho activity {act_id}: {e}")
                 laps = []
 
             lap_paces = []
@@ -280,17 +320,76 @@ def gen_report():
                         invalid = True
                         break
 
-            if invalid:
-                invalid_rows.append({
-                    "athlete_id": athlete_id, "firstname": firstname, "lastname": lastname,
-                    "activity_id": act_id, "name": name, "type": act_type, "start_date": start_date,
+            # Ghi log hoạt động hợp lệ và cập nhật epoch
+            if not invalid:
+                distance_m = act.get("distance", 0.0) or 0.0
+                dist_km = distance_m / 1000.0
+                
+                run_log_data = {
+                    "athlete_id": athlete_id,
+                    "activity_id": act_id,
+                    "date_vn": iso_to_vn_date(act.get("start_date")),
                     "distance_km": round(dist_km, 2),
+                    "start_date": act.get("start_date"), # UTC ISO
+                    "type": act_type,
+                    "name": act.get("name"),
+                    "summary_polyline": (act.get("map") or {}).get("summary_polyline", ""),
+                }
+                
+                # Merge: thêm/cập nhật vào log chính
+                all_valid_runs[athlete_id][act_id] = run_log_data
+
+                # Cập nhật mốc thời gian đã xử lý mới nhất
+                act_epoch = to_epoch(datetime.fromisoformat(act.get("start_date").replace("Z", "+00:00")))
+                new_latest_epoch = max(new_latest_epoch, act_epoch)
+                
+            else:
+                # Hoạt động không hợp lệ
+                newly_invalid_runs.append({
+                    "athlete_id": athlete_id, "firstname": firstname, "lastname": lastname,
+                    "activity_id": act_id, "name": act.get("name"), "type": act_type, 
+                    "start_date": act.get("start_date"),
+                    "distance_km": round(act.get("distance", 0.0)/1000.0, 2),
                     "avg_lap_pace_min_per_km_list": ", ".join(f"{p:.2f}" for p in lap_paces) if lap_paces else "NO_LAPS",
                     "activity_url": f"https://www.strava.com/activities/{act_id}",
                     "map_summary_polyline": (act.get("map") or {}).get("summary_polyline", ""),
                 })
-                continue
+        
+        invalid_rows.extend(newly_invalid_runs)
+        
+        row["latest_activity_epoch"] = new_latest_epoch
+        updated_token_rows.append(row)
 
+
+        # === 2. TÁI TÍNH TOÁN (RE-CALCULATE) LÃNH ĐẠO TỪ MASTER LOG ===
+        
+        daily_raw = {} 
+        daily_valid_act_count = {} 
+        total_raw_km = 0.0
+        total_capped_km = 0.0
+        total_runs_count = 0
+        
+        # Lấy mốc thời gian epoch (UTC) của START_VN và END_VN
+        start_epoch = to_epoch(START_VN)
+        end_epoch = to_epoch(END_VN)
+
+        # Lặp qua TẤT CẢ các hoạt động hợp lệ đã được lưu trữ (cũ và mới)
+        current_athlete_valid_runs = all_valid_runs.get(athlete_id, {}).values()
+
+        for run_data in current_athlete_valid_runs:
+            dist_km = run_data["distance_km"]
+            day_vn = run_data["date_vn"]
+            start_date_utc = run_data["start_date"]
+            
+            # Kiểm tra xem hoạt động có nằm trong phạm vi thời gian phân tích hay không
+            try:
+                run_epoch = to_epoch(datetime.fromisoformat(start_date_utc.replace("Z", "+00:00")))
+                if not (start_epoch <= run_epoch <= end_epoch):
+                    continue 
+            except ValueError:
+                continue 
+
+            # Tính tổng thô và đếm số hoạt động
             total_runs_count += 1
             total_raw_km += dist_km
 
@@ -298,6 +397,7 @@ def gen_report():
                 daily_raw[day_vn] = daily_raw.get(day_vn, 0.0) + dist_km
                 daily_valid_act_count[day_vn] = daily_valid_act_count.get(day_vn, 0) + 1
 
+        # Tính cap theo ngày và tổng cap
         for day, raw_km in sorted(daily_raw.items()):
             capped_km = raw_km if raw_km <= DAILY_CAP_KM else DAILY_CAP_KM
             total_capped_km += capped_km
@@ -308,16 +408,19 @@ def gen_report():
                 "valid_activities_count": daily_valid_act_count.get(day, 0),
             })
 
+        # Cập nhật Leaderboard
         leaderboard_rows.append({
             "athlete_id": athlete_id, "firstname": firstname, "lastname": lastname,
             "total_raw_distance_km": round(total_raw_km, 2), "total_capped_distance_km": round(total_capped_km, 2),
             "valid_runs_count": total_runs_count,
         })
 
-    # Lưu lại tokens (sau khi refresh và cập nhật latest_activity_epoch)
-    save_tokens(TOKENS_CSV, updated_token_rows)
 
-    # Xuất CSV leaderboard (Sử dụng hằng số mới)
+    # Lưu lại tất cả các file đầu ra
+    save_tokens(TOKENS_CSV, updated_token_rows)
+    save_valid_runs(VALID_RUNS_LOG, all_valid_runs) # LƯU LOG MỚI
+
+    # Xuất CSV leaderboard
     if leaderboard_rows:
         leaderboard_rows.sort(
             key=lambda r: (r["total_capped_distance_km"], r["valid_runs_count"]),
@@ -334,7 +437,7 @@ def gen_report():
             for r in leaderboard_rows:
                 writer.writerow(r)
 
-    # Xuất CSV daily_km (Sử dụng hằng số mới)
+    # Xuất CSV daily_km
     if daily_rows:
         daily_rows.sort(key=lambda r: (r["date_vn"], r["athlete_id"]))
         fieldnames = [
@@ -348,7 +451,7 @@ def gen_report():
             for r in daily_rows:
                 writer.writerow(r)
 
-    # Xuất CSV invalid_activities (Sử dụng hằng số mới)
+    # Xuất CSV invalid_activities
     if invalid_rows:
         fieldnames = [
             "athlete_id", "firstname", "lastname",
@@ -364,9 +467,10 @@ def gen_report():
 
     print("\n✅ Done.")
     print(f"- {TOKENS_CSV} đã được cập nhật mốc thời gian đã xử lý mới nhất.")
-    print(f"- {LEADERBOARD_CSV}           → tổng km (raw & capped) mỗi athlete")
-    print(f"- {DAILY_KM_CSV}              → km từng ngày (raw & capped, giờ VN)")
-    print(f"- {INVALID_ACTIVITIES_CSV}    → các activity bị loại do pace ngoài ({PACE_MIN}, {PACE_MAX})")
+    print(f"- {VALID_RUNS_LOG}           → Log của TẤT CẢ hoạt động hợp lệ đã xử lý.")
+    print(f"- {LEADERBOARD_CSV}           → Tổng km (đã cộng dồn) mỗi athlete.")
+    print(f"- {DAILY_KM_CSV}              → Km từng ngày (đã cộng dồn) theo phạm vi.")
+    print(f"- {INVALID_ACTIVITIES_CSV}    → Các activity bị loại trong lần chạy này.")
 
 # if __name__ == "__main__":
 #     main()
