@@ -477,5 +477,5 @@ def gen_report():
     print(f"- {DAILY_KM_CSV}              → Km từng ngày (đã cộng dồn) theo phạm vi.")
     print(f"- {INVALID_ACTIVITIES_CSV}    → Các activity bị loại trong lần chạy này.")
 
-# if __name__ == "__main__":
-#     main()
+if __name__ == "__main__":
+    gen_report()
