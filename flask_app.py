@@ -3,7 +3,7 @@ import time
 import fcntl  # For Unix-based systems
 from flask import Flask, request, render_template_string, url_for
 from exchange_token import register_athlete
-from process_data import gen_report, LEADERBOARD_CSV, DAILY_KM_CSV, INVALID_ACTIVITIES_CSV
+from daily_process_data import gen_report,  DAILY_KM_CSV, INVALID_ACTIVITIES_CSV
 import io
 import zipfile
 from flask import send_file, abort
@@ -68,8 +68,13 @@ def render_reports_form(error=None):
                                 {% endif %}
                                 <form method="post" action="/reports">
                                     <div class="mb-3">
+                                        <label for="checkDate" class="form-label">Check date</label>
+                                        <input type="date" class="form-control" id="checkDate" name="checkDate" required autofocus>
+                                    </div>
+
+                                    <div class="mb-3">
                                         <label for="password" class="form-label">Password</label>
-                                        <input type="password" class="form-control" id="password" name="password" required autofocus>
+                                        <input type="password" class="form-control" id="password" name="password" required>
                                     </div>
                                     <div class="d-grid">
                                         <button class="btn btn-primary" type="submit">Get reports</button>
@@ -177,7 +182,6 @@ def reports():
     # Determine if request includes any non-form auth (query/header).
     has_query_pw = bool(request.args.get('password'))
     has_header_pw = bool(request.headers.get('X-Reports-Password') or request.headers.get('Authorization'))
-
     # If GET and no header/query auth, show the Bootstrap form
     if request.method == 'GET' and not (has_query_pw or has_header_pw):
         return render_reports_form()
@@ -185,13 +189,14 @@ def reports():
     # If POST, validate the posted form password and show friendly error
     if request.method == 'POST':
         form_pw = request.form.get('password')
+        check_date = request.form.get('checkDate')
         if not form_pw:
             return render_reports_form(error='Please provide a password')
         if form_pw != REPORTS_PASSWORD:
             return render_reports_form(error='Invalid password')
 
         # form password ok -> generate the report
-        gen_report()
+        gen_report(check_date)
 
     else:
         # Non-POST path where header/query password was supplied: use existing check
@@ -201,9 +206,8 @@ def reports():
         gen_report()
     # Replace these with the actual three file paths you want zipped
     file_paths = [
-        LEADERBOARD_CSV,
-        DAILY_KM_CSV,
-        INVALID_ACTIVITIES_CSV
+        f"{check_date}-{DAILY_KM_CSV}",
+        f"{check_date}-{INVALID_ACTIVITIES_CSV}",
     ]
 
     buf = io.BytesIO()
