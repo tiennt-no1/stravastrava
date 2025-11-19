@@ -466,15 +466,9 @@ def gen_report(date):
             "valid_activities_count",
         ]
 
-        # Check if file exists and has content (size > 0)
-        file_exists = os.path.isfile(DAILY_KM_CSV) and os.path.getsize(DAILY_KM_CSV) > 0
-
         with open(f"{date}-{DAILY_KM_CSV}", "w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
-
-            # Write header only if the file is new or empty
-            if not file_exists:
-                writer.writeheader()
+            writer.writeheader()
             
             for r in daily_rows:
                 writer.writerow(r)
@@ -487,12 +481,10 @@ def gen_report(date):
             "distance_km", "avg_lap_pace_min_per_km_list",
             "activity_url", "map_summary_polyline",
         ]
-        file_exists = os.path.isfile(INVALID_ACTIVITIES_CSV) and os.path.getsize(INVALID_ACTIVITIES_CSV) > 0
-        with open(f"{date}-{INVALID_ACTIVITIES_CSV}", "a", newline="", encoding="utf-8") as f:
+        with open(f"{date}-{INVALID_ACTIVITIES_CSV}", "w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             # Write header only if the file is new or empty
-            if not file_exists:
-                writer.writeheader()
+            writer.writeheader()
             for r in invalid_rows:
                 writer.writerow(r) 
 
