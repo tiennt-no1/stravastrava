@@ -147,7 +147,8 @@ def iso_to_vn_date(iso_str: str):
 
 def load_tokens(path: str):
     """Tải tokens từ CSV."""
-    rows = []
+    all_rows = []
+    batch_rows = []
     athelete_ids = set()
     offset = 0
     # Read numeric offset from offset.txt (optional). If present, patch csv.DictReader to skip that many data rows.
@@ -163,7 +164,7 @@ def load_tokens(path: str):
         offset = 0
 
     if not os.path.exists(path):
-        return rows
+        return all_rows
     with open(path, "r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
@@ -177,20 +178,20 @@ def load_tokens(path: str):
             if athlete_id in athelete_ids:
                 print(f"⚠️  Duplicate athlete_id {athlete_id} in tokens.csv, skipping duplicate.")
                 continue
-            rows.append(row)
+            all_rows.append(row)
     next_offsets = offset + BATCH_FETCH_TOKENS
-    if next_offsets < len(rows):
-        rows = rows[offset:next_offsets]
+    if next_offsets < len(all_rows):
+        batch_rows = all_rows[offset:next_offsets]
         with open(offset_file, "w", encoding="utf-8") as of:
             of.write(str(next_offsets))
         print(f"  -> Updated offset to {next_offsets} in {offset_file}")
     else:
-        rows = rows[offset:]
+        batch_rows = all_rows[offset:]
         # Reset offset file
         if os.path.exists(offset_file):
             os.remove(offset_file)
             print(f"  -> Removed {offset_file} as all tokens have been processed.")
-    return rows
+    return batch_rows, all_rows
 
 
 def save_tokens(path: str, rows):
@@ -258,7 +259,7 @@ def save_valid_runs(path: str, log: dict):
 # ================== MAIN ==================
 
 def gen_report():
-    token_rows = load_tokens(TOKENS_CSV)
+    token_rows, all_token_rows = load_tokens(TOKENS_CSV)
     if not token_rows:
         raise Exception("⚠️  tokens.csv rỗng hoặc không tồn tại.")
 
@@ -447,7 +448,13 @@ def gen_report():
 
 
     # Lưu lại tất cả các file đầu ra
+    all_token_rows_map = {r["athlete_id"]: r for r in all_token_rows}
+    for updated_row in updated_token_rows:
+        athlete_id = updated_row.get("athlete_id", "")
+        all_token_rows_map[athlete_id] = updated_row
+    updated_token_rows = list(all_token_rows_map.values())
     save_tokens(TOKENS_CSV, updated_token_rows)
+
     save_valid_runs(VALID_RUNS_LOG, all_valid_runs) # LƯU LOG MỚI
 
     # Xuất CSV leaderboard
@@ -461,9 +468,11 @@ def gen_report():
             "total_raw_distance_km", "total_capped_distance_km",
             "valid_runs_count",
         ]
-        with open(LEADERBOARD_CSV, "w", newline="", encoding="utf-8") as f:
+        file_exists = os.path.isfile(LEADERBOARD_CSV) and os.path.getsize(LEADERBOARD_CSV) > 0
+        with open(LEADERBOARD_CSV, "a", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
-            writer.writeheader()
+            if not file_exists:
+                writer.writeheader()
             for r in leaderboard_rows:
                 writer.writerow(r)
 
@@ -475,9 +484,17 @@ def gen_report():
             "date_vn", "raw_distance_km", "capped_distance_km",
             "valid_activities_count",
         ]
-        with open(DAILY_KM_CSV, "w", newline="", encoding="utf-8") as f:
+
+        # Check if file exists and has content (size > 0)
+        file_exists = os.path.isfile(DAILY_KM_CSV) and os.path.getsize(DAILY_KM_CSV) > 0
+
+        with open(DAILY_KM_CSV, "a", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
-            writer.writeheader()
+
+            # Write header only if the file is new or empty
+            if not file_exists:
+                writer.writeheader()
+            
             for r in daily_rows:
                 writer.writerow(r)
 
@@ -489,11 +506,15 @@ def gen_report():
             "distance_km", "avg_lap_pace_min_per_km_list",
             "activity_url", "map_summary_polyline",
         ]
-        with open(INVALID_ACTIVITIES_CSV, "w", newline="", encoding="utf-8") as f:
+        file_exists = os.path.isfile(INVALID_ACTIVITIES_CSV) and os.path.getsize(INVALID_ACTIVITIES_CSV) > 0
+        with open(INVALID_ACTIVITIES_CSV, "a", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
-            writer.writeheader()
+            # Write header only if the file is new or empty
+            if not file_exists:
+                writer.writeheader()
             for r in invalid_rows:
-                writer.writerow(r)
+                writer.writerow(r) 
+
 
     print("\n✅ Done.")
     print(f"- {TOKENS_CSV} đã được cập nhật mốc thời gian đã xử lý mới nhất.")
