@@ -148,6 +148,7 @@ def iso_to_vn_date(iso_str: str):
 def load_tokens(path: str):
     """Tải tokens từ CSV."""
     rows = []
+    athelete_ids = set()
     if not os.path.exists(path):
         return rows
     with open(path, "r", encoding="utf-8") as f:
@@ -159,6 +160,10 @@ def load_tokens(path: str):
                 row["latest_activity_epoch"] = int(float(epoch_str))
             except ValueError:
                 row["latest_activity_epoch"] = 0
+            athlete_id = row.get("athlete_id", "")
+            if athlete_id in athelete_ids:
+                print(f"⚠️  Duplicate athlete_id {athlete_id} in tokens.csv, skipping duplicate.")
+                continue
             rows.append(row)
     return rows
 
