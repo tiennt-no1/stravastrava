@@ -33,7 +33,7 @@ PACE_MAX = 15.0
 
 # Giới hạn km / ngày
 DAILY_CAP_KM = 10.0
-
+BATCH_FETCH_TOKENS = 5  # Số athlete xử lý mỗi lần chạy
 # API config
 STRAVA_BASE = "https://www.strava.com/api/v3"
 PER_PAGE = 100
@@ -149,6 +149,19 @@ def load_tokens(path: str):
     """Tải tokens từ CSV."""
     rows = []
     athelete_ids = set()
+    offset = 0
+    # Read numeric offset from offset.txt (optional). If present, patch csv.DictReader to skip that many data rows.
+    offset_file = "offset.txt"
+    try:
+        if os.path.exists(offset_file):
+            with open(offset_file, "r", encoding="utf-8") as of:
+                content = of.read().strip()
+                if content:
+                    offset = max(0, int(content))
+                    print(f"  -> Using offset={offset} from {offset_file}")
+    except Exception:
+        offset = 0
+
     if not os.path.exists(path):
         return rows
     with open(path, "r", encoding="utf-8") as f:
@@ -165,6 +178,18 @@ def load_tokens(path: str):
                 print(f"⚠️  Duplicate athlete_id {athlete_id} in tokens.csv, skipping duplicate.")
                 continue
             rows.append(row)
+    next_offsets = offset + BATCH_FETCH_TOKENS
+    if next_offsets < len(rows):
+        rows = rows[offset:next_offsets]
+        with open(offset_file, "w", encoding="utf-8") as of:
+            of.write(str(next_offsets))
+        print(f"  -> Updated offset to {next_offsets} in {offset_file}")
+    else:
+        rows = rows[offset:]
+        # Reset offset file
+        if os.path.exists(offset_file):
+            os.remove(offset_file)
+            print(f"  -> Removed {offset_file} as all tokens have been processed.")
     return rows
 
 
