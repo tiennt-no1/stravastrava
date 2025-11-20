@@ -3,7 +3,8 @@ import time
 import fcntl  # For Unix-based systems
 from flask import Flask, request, render_template_string, url_for
 from exchange_token import register_athlete
-from daily_process_data import gen_report,  DAILY_KM_CSV, INVALID_ACTIVITIES_CSV
+from daily_process_data import gen_report,  DAILY_KM_CSV, INVALID_ACTIVITIES_CSV, START_VN, END_VN, VN_TZ
+from datetime import datetime, time as dt_time
 import io
 import zipfile
 from flask import send_file, abort
@@ -183,7 +184,7 @@ def reports():
     has_query_pw = bool(request.args.get('password'))
     has_header_pw = bool(request.headers.get('X-Reports-Password') or request.headers.get('Authorization'))
     # If GET and no header/query auth, show the Bootstrap form
-    if request.method == 'GET' and not (has_query_pw or has_header_pw):
+    if request.method == 'GET':
         return render_reports_form()
 
     # If POST, validate the posted form password and show friendly error
@@ -195,30 +196,31 @@ def reports():
         if form_pw != REPORTS_PASSWORD:
             return render_reports_form(error='Invalid password')
 
+        # validate check_date
+        if not check_date:
+            return render_reports_form(error='Please provide a check date')
+
+        check_date_obj = datetime.strptime(check_date, "%Y-%m-%d")
+        check_date_start = datetime.combine(check_date_obj.date(), dt_time.min, tzinfo=VN_TZ)
+        if check_date_start < START_VN or check_date_start > END_VN: 
+            return render_reports_form(error=f'Check date must be between {START_VN} and {END_VN}')
         # form password ok -> generate the report
         gen_report(check_date)
+        # Replace these with the actual three file paths you want zipped
+        file_paths = [
+            f"{check_date}-{DAILY_KM_CSV}",
+            f"{check_date}-{INVALID_ACTIVITIES_CSV}",
+        ]
 
-    else:
-        # Non-POST path where header/query password was supplied: use existing check
-        pw_check = _check_reports_password()
-        if pw_check is not None:
-            return pw_check
-        gen_report()
-    # Replace these with the actual three file paths you want zipped
-    file_paths = [
-        f"{check_date}-{DAILY_KM_CSV}",
-        f"{check_date}-{INVALID_ACTIVITIES_CSV}",
-    ]
-
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for fp in file_paths:
-            if not os.path.isfile(fp):
-                return abort(404, description=f"File not found: {fp}")
-            zf.write(fp, arcname=os.path.basename(fp))
-    buf.seek(0)
-    # Flask >=2.0 uses download_name; older versions use attachment_filename
-    return send_file(buf, mimetype="application/zip", as_attachment=True, download_name="reports.zip")
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for fp in file_paths:
+                if not os.path.isfile(fp):
+                    return abort(404, description=f"File not found: {fp}")
+                zf.write(fp, arcname=os.path.basename(fp))
+        buf.seek(0)
+        # Flask >=2.0 uses download_name; older versions use attachment_filename
+        return send_file(buf, mimetype="application/zip", as_attachment=True, download_name="reports.zip")
 
 if __name__ == '__main__':
     app.run(debug=True)

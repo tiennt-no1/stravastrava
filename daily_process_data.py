@@ -249,8 +249,8 @@ def gen_report(date):
 
     if type(date) == str:
         date = datetime.strptime(date, "%Y-%m-%d").date()
-    start_of_day = datetime.combine(date, dt_time.min)  # 00:00:00
-    end_of_day = datetime.combine(date, dt_time.max)    # 23:59:59.999999
+    start_of_day = datetime.combine(date, dt_time.min, tzinfo=VN_TZ)  # 00:00:00
+    end_of_day = datetime.combine(date, dt_time.max, tzinfo=VN_TZ)    # 23:59:59.999999
     start_epoch = int(start_of_day.timestamp())
     end_epoch = int(end_of_day.timestamp())
 
@@ -458,35 +458,35 @@ def gen_report(date):
         #         writer.writerow(r)
 
     # Xuất CSV daily_km
-    if daily_rows:
-        daily_rows.sort(key=lambda r: (r["date_vn"], r["athlete_id"]))
-        fieldnames = [
-            "athlete_id", "firstname", "lastname",
-            "date_vn", "raw_distance_km", "capped_distance_km",
-            "valid_activities_count",
-        ]
+    # if daily_rows:
+    daily_rows.sort(key=lambda r: (r["date_vn"], r["athlete_id"]))
+    fieldnames = [
+        "athlete_id", "firstname", "lastname",
+        "date_vn", "raw_distance_km", "capped_distance_km",
+        "valid_activities_count",
+    ]
 
-        with open(f"{date}-{DAILY_KM_CSV}", "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-            writer.writeheader()
-            
-            for r in daily_rows:
-                writer.writerow(r)
+    with open(f"{date}-{DAILY_KM_CSV}", "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        
+        for r in daily_rows:
+            writer.writerow(r)
 
     # Xuất CSV invalid_activities
-    if invalid_rows:
-        fieldnames = [
-            "athlete_id", "firstname", "lastname",
-            "activity_id", "name", "type", "start_date",
-            "distance_km", "avg_lap_pace_min_per_km_list",
-            "activity_url", "map_summary_polyline",
-        ]
-        with open(f"{date}-{INVALID_ACTIVITIES_CSV}", "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-            # Write header only if the file is new or empty
-            writer.writeheader()
-            for r in invalid_rows:
-                writer.writerow(r) 
+    # if invalid_rows:
+    fieldnames = [
+        "athlete_id", "firstname", "lastname",
+        "activity_id", "name", "type", "start_date",
+        "distance_km", "avg_lap_pace_min_per_km_list",
+        "activity_url", "map_summary_polyline",
+    ]
+    with open(f"{date}-{INVALID_ACTIVITIES_CSV}", "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        # Write header only if the file is new or empty
+        writer.writeheader()
+        for r in invalid_rows:
+            writer.writerow(r) 
 
 
     print("\n✅ Done.")
